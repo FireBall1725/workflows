@@ -49,9 +49,16 @@ on:
       version:
         value: ${{ jobs.release.outputs.version }}
 
-permissions:
-  contents: write
-  packages: write
+# Permissions are deliberately NOT declared here. A reusable workflow that
+# requests more than its caller granted fails at STARTUP, with no jobs, no
+# annotation, and no log to read: the run just says startup_failure. Declaring
+# `contents: write` here meant a nightly caller granting `contents: read` could
+# never run, which is exactly what happened on firebin-mcp on 2026-08-07.
+#
+# Callers declare what they need on the calling job:
+#
+#   nightly       contents: read,  packages: write   (no tag, no Release)
+#   rc / stable   contents: write, packages: write   (tags and publishes)
 
 jobs:
   release:

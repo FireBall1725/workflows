@@ -80,6 +80,9 @@ and release.yml with:
           default: false
   jobs:
     release:
+      permissions:
+        contents: write
+        packages: write
       uses: FireBall1725/workflows/.github/workflows/release-container.yml@v1
       with:
         image: ghcr.io/fireball1725/$(basename "$TARGET")
@@ -94,6 +97,9 @@ plus nightly.yml:
     push: { branches: [main] }
   jobs:
     nightly:
+      permissions:
+        contents: read
+        packages: write
       uses: FireBall1725/workflows/.github/workflows/release-container.yml@v1
       with:
         image: ghcr.io/fireball1725/$(basename "$TARGET")
