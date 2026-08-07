@@ -33,7 +33,7 @@ copy() {
 
 echo "==> $TARGET ($LANG)"
 copy .editorconfig
-copy .ecrc
+copy .editorconfig-checker.json
 copy cliff.toml
 
 case "$LANG" in
