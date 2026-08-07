@@ -63,7 +63,7 @@ Next, replace the repo's .github/workflows/ci.yml with:
     cancel-in-progress: true
   jobs:
     ci:
-      uses: FireBall1725/firelabs-ci/.github/workflows/ci-${LANG}.yml@v1
+      uses: FireBall1725/workflows/.github/workflows/ci-${LANG}.yml@v1
 
 and release.yml with:
 
@@ -80,7 +80,7 @@ and release.yml with:
           default: false
   jobs:
     release:
-      uses: FireBall1725/firelabs-ci/.github/workflows/release-container.yml@v1
+      uses: FireBall1725/workflows/.github/workflows/release-container.yml@v1
       with:
         image: ghcr.io/fireball1725/$(basename "$TARGET")
         channel: \${{ inputs.channel }}
@@ -94,7 +94,7 @@ plus nightly.yml:
     push: { branches: [main] }
   jobs:
     nightly:
-      uses: FireBall1725/firelabs-ci/.github/workflows/release-container.yml@v1
+      uses: FireBall1725/workflows/.github/workflows/release-container.yml@v1
       with:
         image: ghcr.io/fireball1725/$(basename "$TARGET")
         channel: nightly

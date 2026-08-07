@@ -1,4 +1,4 @@
-# firelabs-ci
+# workflows
 
 Shared CI, release, and announcement workflows for FireBall1725's repos. One
 copy of the logic that used to be pasted into a dozen repos and drift.
@@ -20,7 +20,7 @@ workflows to add. A caller ends up about ten lines long:
 ```yaml
 jobs:
   ci:
-    uses: FireBall1725/firelabs-ci/.github/workflows/ci-go.yml@v1
+    uses: FireBall1725/workflows/.github/workflows/ci-go.yml@v1
 ```
 
 ## Release channels

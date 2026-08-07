@@ -37,9 +37,9 @@ jobs:
         continue-on-error: true
         uses: actions/checkout@v4
         with:
-          repository: FireBall1725/firelabs-ci
+          repository: FireBall1725/workflows
           ref: v1
-          path: .firelabs-ci
+          path: .shared-workflows
 
       - name: Fetch the release
         id: release
@@ -88,4 +88,4 @@ jobs:
           DRY_RUN: ${{ inputs.dry-run }}
         run: |
           python3 -m pip install --quiet PyYAML
-          python3 .firelabs-ci/actions/discord-embed/build_embed.py
+          python3 .shared-workflows/actions/discord-embed/build_embed.py

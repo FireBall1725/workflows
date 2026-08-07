@@ -6,7 +6,7 @@
 # block entirely, so gofmt was not gated there despite the rest of the config
 # being near-identical.
 #
-# Keep in step with the runner pinned in firelabs-ci's ci-go.yml:
+# Keep in step with the runner pinned in the workflows repo's ci-go.yml:
 # golangci-lint-action@v8 with version v2.11.4. Older action majors install a
 # v1 binary, which rejects this file outright with "unsupported version of the
 # configuration".

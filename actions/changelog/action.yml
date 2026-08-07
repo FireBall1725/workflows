@@ -52,7 +52,7 @@ runs:
         set -euo pipefail
 
         if [ ! -f "$CONFIG" ]; then
-          echo "::error::$CONFIG not found. Run firelabs-ci/scripts/scaffold.sh in this repo."
+          echo "::error::$CONFIG not found. Run workflows/scripts/scaffold.sh in this repo."
           exit 1
         fi
 

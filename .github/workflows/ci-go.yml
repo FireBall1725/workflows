@@ -4,7 +4,7 @@ name: CI (Go)
 #
 #   jobs:
 #     ci:
-#       uses: FireBall1725/firelabs-ci/.github/workflows/ci-go.yml@v1
+#       uses: FireBall1725/workflows/.github/workflows/ci-go.yml@v1
 #       with:
 #         postgres-db: firebin
 #         test-env: |

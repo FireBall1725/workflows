@@ -13,7 +13,7 @@ name: Release (container)
 #
 #   jobs:
 #     release:
-#       uses: FireBall1725/firelabs-ci/.github/workflows/release-container.yml@v1
+#       uses: FireBall1725/workflows/.github/workflows/release-container.yml@v1
 #       with:
 #         image: ghcr.io/fireball1725/firebin-mcp
 #         channel: ${{ inputs.channel }}
@@ -73,7 +73,7 @@ jobs:
 
       - name: Compute version
         id: version
-        uses: FireBall1725/firelabs-ci/actions/compute-version@v1
+        uses: FireBall1725/workflows/actions/compute-version@v1
         with:
           channel: ${{ inputs.channel }}
           force-version: ${{ inputs.force-version }}
@@ -136,7 +136,7 @@ jobs:
 
       - name: Generate changelog
         id: changelog
-        uses: FireBall1725/firelabs-ci/actions/changelog@v1
+        uses: FireBall1725/workflows/actions/changelog@v1
         with:
           # For a tagged release, notes cover the new tag. For nightly there is
           # no tag, so it covers everything since the last stable.
@@ -188,7 +188,7 @@ jobs:
   announce:
     needs: release
     if: ${{ inputs.channel != 'nightly' && !inputs.dry-run }}
-    uses: FireBall1725/firelabs-ci/.github/workflows/announce-discord.yml@v1
+    uses: FireBall1725/workflows/.github/workflows/announce-discord.yml@v1
     with:
       version: ${{ needs.release.outputs.version }}
       channel: ${{ inputs.channel }}
