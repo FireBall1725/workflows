@@ -1,0 +1,127 @@
+name: CI (Go)
+
+# Shared Go CI. Callers:
+#
+#   jobs:
+#     ci:
+#       uses: FireBall1725/firelabs-ci/.github/workflows/ci-go.yml@v1
+#       with:
+#         postgres-db: firebin
+#         test-env: |
+#           DATABASE_URL=postgres://firebin:firebin@localhost:5432/firebin?sslmode=disable
+#           JWT_SECRET=ci-test-secret
+
+on:
+  workflow_call:
+    inputs:
+      postgres-db:
+        description: Database, user, and password name when postgres is on.
+        type: string
+        default: app
+      golangci-version:
+        description: >
+          Pinned golangci-lint. v2 config schema needs a v2 binary, and the
+          action major decides which one gets installed.
+        type: string
+        default: v2.11.4
+      docker-build:
+        description: Build the Dockerfile without pushing, as a PR-time check.
+        type: boolean
+        default: true
+      test-env:
+        description: KEY=VALUE lines exported before go test.
+        type: string
+        default: ""
+
+jobs:
+  build-test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    # Postgres always starts. `services:` accepts no `if:`, and an expression
+    # that resolves to an empty image name is a hard error rather than a
+    # skipped service. It costs about eight seconds; repos that don't need a
+    # database ignore the connection string.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ${{ inputs.postgres-db }}
+          POSTGRES_PASSWORD: ${{ inputs.postgres-db }}
+          POSTGRES_DB: ${{ inputs.postgres-db }}
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ${{ inputs.postgres-db }}"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Read from go.mod rather than a pinned string. librarium-api tested
+          # on 1.25 while its Dockerfile built with 1.26, so CI was validating
+          # a toolchain the image never used.
+          go-version-file: go.mod
+          cache: true
+
+      - run: go build ./...
+      - run: go vet ./...
+
+      - name: Check formatting
+        # golangci-lint also gates gofmt, but this fails in two seconds with a
+        # readable file list instead of buried in lint output.
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt would rewrite these files. Run 'golangci-lint fmt'."
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Test
+        env:
+          TEST_ENV: ${{ inputs.test-env }}
+        run: |
+          if [ -n "$TEST_ENV" ]; then
+            while IFS= read -r line; do
+              [ -n "$line" ] && echo "$line" >> "$GITHUB_ENV"
+            done <<< "$TEST_ENV"
+          fi
+          go test -race -count=1 ./...
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: ${{ inputs.golangci-version }}
+
+  editorconfig:
+    name: Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: editorconfig-checker/action-editorconfig-checker@main
+      - run: editorconfig-checker
+
+  docker:
+    name: Docker build
+    if: inputs.docker-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          # Single-arch on PRs. The release build does multi-arch; emulating
+          # arm64 here would double the wait for no extra signal.
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,0 +1,135 @@
+name: Compute version
+description: >
+  Works out the next YY.M.revision for a channel, and refuses to continue if the
+  tag it computed already exists. The single copy of this logic; five hand-rolled
+  variants existed before, and one of them was wrong.
+
+inputs:
+  channel:
+    description: nightly, rc, or stable
+    required: true
+  force-version:
+    description: >
+      Skip the computation and use this exact version. For re-cutting a failed
+      release without the revision marching forward. No leading v.
+    required: false
+    default: ""
+
+outputs:
+  version:
+    description: "26.8.1, 26.8.1-rc.2, or 26.8.1-nightly.202608071432"
+    value: ${{ steps.compute.outputs.version }}
+  tag:
+    description: The version with a leading v. Empty for nightly, which is untagged.
+    value: ${{ steps.compute.outputs.tag }}
+  base:
+    description: The YY.M.revision with no channel suffix.
+    value: ${{ steps.compute.outputs.base }}
+  is-prerelease:
+    description: "true for nightly and rc"
+    value: ${{ steps.compute.outputs.is-prerelease }}
+
+runs:
+  using: composite
+  steps:
+    - name: Compute
+      id: compute
+      shell: bash
+      env:
+        CHANNEL: ${{ inputs.channel }}
+        FORCE: ${{ inputs.force-version }}
+      run: |
+        set -euo pipefail
+
+        case "$CHANNEL" in
+          nightly|rc|stable) ;;
+          *) echo "::error::channel must be nightly, rc, or stable (got '$CHANNEL')"; exit 1 ;;
+        esac
+
+        # A shallow clone has no tags, so every version computes as .0 and
+        # collides with whatever is already released. Fail loudly instead.
+        if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+          echo "::error::Repository is a shallow clone. Set fetch-depth: 0 on actions/checkout."
+          exit 1
+        fi
+
+        YY=$(date -u +%y)
+        MM=$(date -u +%-m)     # %-m strips the leading zero: 8, not 08.
+        PREFIX="${YY}.${MM}"
+
+        if [ -n "$FORCE" ]; then
+          VERSION="$FORCE"
+          BASE="${VERSION%%-*}"
+        else
+          # Only fully-numeric tags count when working out the last revision.
+          #
+          # Without the regex, `git tag --list "v26.8.*"` also matches
+          # v26.8.1-rc.1, and taking the text after the last dot yields "1", so
+          # the next stable computes from a prerelease. librarium-api has this
+          # bug today and has only been saved by never having cut a prerelease.
+          LAST_REV=$(git tag --list "v${PREFIX}.*" \
+            | grep -E "^v${PREFIX}\.[0-9]+$" \
+            | sed "s/^v${PREFIX}\.//" \
+            | sort -n | tail -n1 || true)
+
+          # All three channels share the same base. An rc or a nightly is a
+          # candidate FOR the next stable, so cutting 26.8.1-rc.1, then more
+          # nightlies, then stable all land on 26.8.1.
+          if [ -z "$LAST_REV" ]; then
+            REV=0
+          else
+            REV=$((LAST_REV + 1))
+          fi
+          BASE="${PREFIX}.${REV}"
+
+          case "$CHANNEL" in
+            stable)
+              VERSION="$BASE"
+              ;;
+            rc)
+              LAST_RC=$(git tag --list "v${BASE}-rc.*" \
+                | sed "s/^v${BASE}-rc\.//" \
+                | grep -E '^[0-9]+$' \
+                | sort -n | tail -n1 || true)
+              VERSION="${BASE}-rc.$(( ${LAST_RC:-0} + 1 ))"
+              ;;
+            nightly)
+              # A UTC timestamp rather than a run number: it sorts
+              # chronologically, it is a valid SemVer numeric identifier (the
+              # year leads, so no leading zero), and it reads as a date when
+              # someone asks which nightly they are running.
+              VERSION="${BASE}-nightly.$(date -u +%Y%m%d%H%M)"
+              ;;
+          esac
+        fi
+
+        # Nightly is deliberately untagged. Hundreds of tags per repo would
+        # make `git fetch` miserable and `git describe` useless, and every
+        # future tag lookup would need its own numeric guard.
+        if [ "$CHANNEL" = "nightly" ]; then
+          TAG=""
+        else
+          TAG="v${VERSION}"
+          # Check BEFORE anything is built or pushed. The old workflows tagged
+          # after the image push, so a collision left a published image with no
+          # release and a half-finished run.
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "::error::Tag ${TAG} already exists. Pass force-version to re-cut deliberately."
+            exit 1
+          fi
+        fi
+
+        case "$CHANNEL" in
+          stable) PRE=false ;;
+          *)      PRE=true ;;
+        esac
+
+        {
+          echo "version=$VERSION"
+          echo "tag=$TAG"
+          echo "base=$BASE"
+          echo "is-prerelease=$PRE"
+        } >> "$GITHUB_OUTPUT"
+
+        echo "Channel $CHANNEL -> $VERSION" >> "$GITHUB_STEP_SUMMARY"
+        echo "Computed $CHANNEL version $VERSION (tag: ${TAG:-none})"

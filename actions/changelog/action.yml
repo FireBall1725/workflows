@@ -1,0 +1,83 @@
+name: Changelog
+description: >
+  Renders release notes with git-cliff from the shared cliff.toml. Text comes
+  from PR titles where a PR exists and from the commit subject where it doesn't,
+  so it works for repos that merge PRs and repos that ship straight from main.
+
+inputs:
+  mode:
+    description: "latest (the newest tag) or unreleased (everything since it)"
+    required: true
+    default: latest
+  tag:
+    description: >
+      The tag being released. Passed to git-cliff so notes can be generated in
+      the same run that creates the tag, before the tag is pushed.
+    required: false
+    default: ""
+  config:
+    description: Path to cliff.toml in the calling repo.
+    required: false
+    default: cliff.toml
+
+outputs:
+  content:
+    description: Rendered markdown, header stripped.
+    value: ${{ steps.render.outputs.content }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install git-cliff
+      shell: bash
+      run: |
+        set -euo pipefail
+        VERSION=2.13.1
+        curl -sSL "https://github.com/orhun/git-cliff/releases/download/v${VERSION}/git-cliff-${VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
+          | tar -xz -C /tmp
+        echo "/tmp/git-cliff-${VERSION}" >> "$GITHUB_PATH"
+
+    - name: Render
+      id: render
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        TAG: ${{ inputs.tag }}
+        CONFIG: ${{ inputs.config }}
+        # git-cliff resolves each commit to its PR through the API. Without a
+        # token it silently falls back to commit subjects, which is a quiet
+        # downgrade rather than a failure.
+        GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
+      run: |
+        set -euo pipefail
+
+        if [ ! -f "$CONFIG" ]; then
+          echo "::error::$CONFIG not found. Run firelabs-ci/scripts/scaffold.sh in this repo."
+          exit 1
+        fi
+
+        ARGS=(--config "$CONFIG" --strip header)
+        # owner/repo comes from the workflow rather than the config file, which
+        # is what lets one cliff.toml be byte-identical in every repo.
+        ARGS+=(--github-repo "$GITHUB_REPOSITORY")
+        [ -n "$TAG" ] && ARGS+=(--tag "$TAG")
+
+        case "$MODE" in
+          latest)     ARGS+=(--latest) ;;
+          unreleased) ARGS+=(--unreleased) ;;
+          *) echo "::error::mode must be latest or unreleased"; exit 1 ;;
+        esac
+
+        CONTENT=$(git-cliff "${ARGS[@]}")
+
+        if [ -z "$(echo "$CONTENT" | tr -d '[:space:]')" ]; then
+          CONTENT="No changes recorded."
+        fi
+
+        {
+          echo "content<<CLIFF_EOF"
+          echo "$CONTENT"
+          echo "CLIFF_EOF"
+        } >> "$GITHUB_OUTPUT"
+
+        echo "$CONTENT"

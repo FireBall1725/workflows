@@ -1,0 +1,91 @@
+name: Announce (Discord)
+
+# Posts a release to the #releases channel. Called as a job inside the release
+# run, never triggered by `on: release: published` — a Release created with the
+# default GITHUB_TOKEN does not fire that event, which is why librarium-ios has
+# to dispatch its TestFlight workflow by hand.
+#
+# Every step is continue-on-error. A Discord outage must not fail a release
+# whose image and tag are already published.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+      channel:
+        type: string
+        required: true
+      image:
+        description: GHCR path with no tag. Omit for repos that ship no container.
+        type: string
+        default: ""
+      dry-run:
+        description: Print the payload instead of posting it.
+        type: boolean
+        default: false
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        continue-on-error: true
+
+      - name: Check out the embed builder
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          repository: FireBall1725/firelabs-ci
+          ref: v1
+          path: .firelabs-ci
+
+      - name: Fetch the release
+        id: release
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          # Read the body back from the Release rather than threading it
+          # through workflow inputs, which have a size limit a changelog can
+          # exceed.
+          BODY=$(gh release view "$TAG" --json body --jq .body 2>/dev/null || echo "")
+          URL=$(gh release view "$TAG" --json url --jq .url 2>/dev/null || echo "")
+          PUBLISHED=$(gh release view "$TAG" --json publishedAt --jq .publishedAt 2>/dev/null || echo "")
+          PREVIOUS=$(git tag --list 'v*' --sort=-v:refname \
+            | grep -vF "$TAG" | head -n1 || true)
+          if [ -n "$PREVIOUS" ]; then
+            COMPARE="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/${PREVIOUS}...${TAG}"
+          else
+            COMPARE="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+          fi
+          {
+            echo "url=$URL"
+            echo "published=$PUBLISHED"
+            echo "compare=$COMPARE"
+            echo "body<<BODY_EOF"
+            echo "$BODY"
+            echo "BODY_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Post
+        continue-on-error: true
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_RELEASES_WEBHOOK }}
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+          REPO: ${{ github.repository }}
+          TAG: v${{ inputs.version }}
+          IMAGE: ${{ inputs.image }}
+          RELEASE_URL: ${{ steps.release.outputs.url }}
+          COMPARE_URL: ${{ steps.release.outputs.compare }}
+          PUBLISHED_AT: ${{ steps.release.outputs.published }}
+          RELEASE_NOTES: ${{ steps.release.outputs.body }}
+          TEMPLATE: .github/release-announce.yml
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          python3 -m pip install --quiet PyYAML
+          python3 .firelabs-ci/actions/discord-embed/build_embed.py

@@ -1,0 +1,196 @@
+name: Release (container)
+
+# Shared release for anything that ships a container image. Three channels:
+#
+#   nightly  every merge to main. Image only. No git tag, no GitHub Release,
+#            no Discord. Exists so the homelab and testers have something to
+#            pull without cutting a release.
+#   rc       a candidate for testers. Tagged, published as a pre-release, and
+#            never moves :latest, so an update checker stays quiet.
+#   stable   the real thing. Moves :latest.
+#
+# Caller:
+#
+#   jobs:
+#     release:
+#       uses: FireBall1725/firelabs-ci/.github/workflows/release-container.yml@v1
+#       with:
+#         image: ghcr.io/fireball1725/firebin-mcp
+#         channel: ${{ inputs.channel }}
+#       secrets: inherit
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: Full GHCR path, no tag.
+        type: string
+        required: true
+      channel:
+        description: nightly, rc, or stable
+        type: string
+        required: true
+      build-args:
+        description: Extra build args, KEY=VALUE per line. VERSION is always passed.
+        type: string
+        default: ""
+      platforms:
+        type: string
+        default: linux/amd64,linux/arm64
+      force-version:
+        description: Re-cut an exact version instead of computing the next one.
+        type: string
+        default: ""
+      dry-run:
+        description: Compute and build, but push nothing and tag nothing.
+        type: boolean
+        default: false
+    outputs:
+      version:
+        value: ${{ jobs.release.outputs.version }}
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # compute-version reads the tag list, and a shallow clone has none.
+          # It fails loudly rather than computing .0 over an existing release.
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Compute version
+        id: version
+        uses: FireBall1725/firelabs-ci/actions/compute-version@v1
+        with:
+          channel: ${{ inputs.channel }}
+          force-version: ${{ inputs.force-version }}
+
+      - name: Resolve image tags
+        id: tags
+        env:
+          IMAGE: ${{ inputs.image }}
+          VERSION: ${{ steps.version.outputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          # The immutable tag is always published. The floating one is a
+          # convenience for humans and `docker pull`; ArgoCD pins the
+          # immutable string, because a moved tag never changes the git
+          # manifest and so never triggers a sync.
+          TAGS="${IMAGE}:${VERSION}"
+          case "$CHANNEL" in
+            stable)  TAGS="${TAGS}
+          ${IMAGE}:latest" ;;
+            nightly) TAGS="${TAGS}
+          ${IMAGE}:nightly" ;;
+            rc)      TAGS="${TAGS}
+          ${IMAGE}:rc" ;;
+          esac
+          {
+            echo "tags<<TAGS_EOF"
+            echo "$TAGS"
+            echo "TAGS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: ${{ !inputs.dry-run }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ !inputs.dry-run }}
+          platforms: ${{ inputs.platforms }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            CHANNEL=${{ inputs.channel }}
+            ${{ inputs.build-args }}
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Generate changelog
+        id: changelog
+        uses: FireBall1725/firelabs-ci/actions/changelog@v1
+        with:
+          # For a tagged release, notes cover the new tag. For nightly there is
+          # no tag, so it covers everything since the last stable.
+          mode: ${{ inputs.channel == 'nightly' && 'unreleased' || 'latest' }}
+          tag: ${{ steps.version.outputs.tag }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Nightly stops here. No tag, no Release, no announcement: it is a merge
+      # to main, not news. What it leaves behind is the image and the diff in
+      # the job summary.
+      - name: Nightly summary
+        if: ${{ inputs.channel == 'nightly' }}
+        env:
+          NOTES: ${{ steps.changelog.outputs.content }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          {
+            echo "## Nightly \`$VERSION\`"
+            echo
+            echo "Pull: \`${{ inputs.image }}:nightly\`"
+            echo
+            echo "### Since the last stable release"
+            echo "$NOTES"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Tag release
+        if: ${{ inputs.channel != 'nightly' && !inputs.dry-run }}
+        run: |
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Publish GitHub Release
+        if: ${{ inputs.channel != 'nightly' && !inputs.dry-run }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          body: ${{ steps.changelog.outputs.content }}
+          # A pre-release is excluded from /releases/latest, which is what
+          # keeps an update checker quiet while a candidate is being tested.
+          prerelease: ${{ steps.version.outputs.is-prerelease == 'true' }}
+          make_latest: ${{ inputs.channel == 'stable' }}
+
+  # A Discord outage must never fail a release that already pushed an image and
+  # a tag, so every step inside announce-discord.yml is continue-on-error. It
+  # cannot be set here: a job that calls a reusable workflow accepts only
+  # uses/with/secrets/needs/if/permissions/strategy/concurrency/name.
+  announce:
+    needs: release
+    if: ${{ inputs.channel != 'nightly' && !inputs.dry-run }}
+    uses: FireBall1725/firelabs-ci/.github/workflows/announce-discord.yml@v1
+    with:
+      version: ${{ needs.release.outputs.version }}
+      channel: ${{ inputs.channel }}
+      image: ${{ inputs.image }}
+    secrets: inherit
