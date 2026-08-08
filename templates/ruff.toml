@@ -27,8 +27,10 @@ ignore = [
 ]
 
 [lint.per-file-ignores]
-# Smoke scripts talk to live services and are run by hand, not by CI.
-"tools/*.py" = ["T201"]
+# Smoke scripts talk to live services and are run by hand, not by CI. They also
+# fix up sys.path before importing the module under test, which is the whole
+# point of being standalone, so imports legitimately come after code.
+"tools/*.py" = ["T201", "E402"]
 "tests/*.py" = ["S101"]
 
 [format]
