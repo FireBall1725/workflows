@@ -57,6 +57,10 @@ on:
         description: Files to attach, e.g. "dist/*". Requires artifact-build.
         type: string
         default: ""
+      keep-nightlies:
+        description: How many nightly versions to keep when pruning after a nightly build.
+        type: number
+        default: 10
       deploy-app:
         description: >
           Directory in homelab-applications to pin the new version into. Leave
@@ -208,6 +212,64 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: ${{ inputs.artifact-build }}
+
+      # Nightlies accumulate one immutable version per merge, forever. This
+      # prunes the old ones straight after publishing a new one, so it runs
+      # exactly as often as versions are created.
+      #
+      # It only ever deletes versions whose tags ALL look like a nightly. It
+      # never deletes an untagged version: a multi-arch image is a manifest
+      # list referencing per-arch children, and those children appear untagged.
+      # On firebin-mcp that was 24 of 30 versions. Deleting them breaks
+      # `docker pull` on one architecture, and it fails at pull time rather
+      # than at delete time, which is the worst place to find out.
+      #
+      # Caveat worth knowing: removing a tagged nightly does not reclaim its
+      # children, which stay as untagged versions. This keeps the version list
+      # readable rather than reclaiming every byte.
+      - name: Prune old nightlies
+        if: ${{ inputs.channel == 'nightly' && !inputs.dry-run }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ inputs.image }}
+          KEEP: ${{ inputs.keep-nightlies }}
+        run: |
+          set -euo pipefail
+          PKG="${IMAGE##*/}"
+          OWNER="${IMAGE#ghcr.io/}"; OWNER="${OWNER%%/*}"
+
+          if ! gh api "users/${OWNER}/packages/container/${PKG}/versions" \
+                 --paginate > /tmp/versions.json 2>/tmp/versions.err; then
+            echo "::warning::Could not list package versions; skipping the prune."
+            head -c 300 /tmp/versions.err
+            exit 0
+          fi
+
+          # Tagged nightlies only, oldest first, minus the newest $KEEP.
+          jq -r --argjson keep "${KEEP}" '
+            [ .[]
+              | select((.metadata.container.tags | length) > 0)
+              | select(all(.metadata.container.tags[]; test("-nightly\\.")))
+            ]
+            | sort_by(.created_at) | reverse | .[$keep:] | .[] | "\(.id) \(.name)"
+          ' /tmp/versions.json > /tmp/prune.txt
+
+          COUNT=$(wc -l < /tmp/prune.txt | tr -d ' ')
+          echo "Pruning ${COUNT} nightly version(s), keeping the newest ${KEEP}."
+
+          while read -r id name; do
+            [ -n "$id" ] || continue
+            if gh api -X DELETE "users/${OWNER}/packages/container/${PKG}/versions/${id}" >/dev/null 2>&1; then
+              echo "  deleted ${name}"
+            else
+              # A user-scoped package may need a PAT with delete:packages
+              # rather than the workflow token. Never fail a published release
+              # over housekeeping.
+              echo "::warning::Could not delete ${name}; the workflow token may lack delete:packages."
+              break
+            fi
+          done < /tmp/prune.txt
 
       - name: Tag release
         if: ${{ inputs.channel != 'nightly' && !inputs.dry-run }}
