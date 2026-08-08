@@ -63,12 +63,12 @@ on:
         default: 10
       deploy-app:
         description: >
-          Directory in homelab-applications to pin the new version into. Leave
-          empty to skip the deploy entirely and keep pinning by hand. Nightly
-          should point at "<app>-nightly" so it never overwrites what
-          production is running.
+          Directory in homelab-applications to pin the new version into, for rc
+          and stable only. Leave empty to keep pinning by hand. Nightly never
+          deploys regardless of this value.
         type: string
         default: ""
+
     outputs:
       version:
         value: ${{ jobs.release.outputs.version }}
@@ -300,7 +300,10 @@ jobs:
   # homelab-config.
   deploy:
     needs: release
-    if: ${{ inputs.deploy-app != '' && !inputs.dry-run }}
+    # Nightly never deploys, even if a caller sets deploy-app. It is built from
+    # whatever just merged and has been through nothing but CI; the cluster
+    # runs rc or stable. Pin a nightly by hand when you actually want one.
+    if: ${{ inputs.deploy-app != '' && inputs.channel != 'nightly' && !inputs.dry-run }}
     permissions:
       contents: read
     uses: FireBall1725/workflows/.github/workflows/deploy-bump.yml@v1
