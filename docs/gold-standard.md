@@ -6,7 +6,12 @@ What every FireBall1725 repo does, and why. A new repo inherits this by running
 ## Versioning
 
 `YY.M.revision`. Month is not zero-padded. The revision counts releases within
-the month and resets when the month rolls over. Local builds carry `YY.M.DEV`.
+the month and resets when the month rolls over.
+
+Local builds report `0.0.0-dev`. It is not a channel: the three shapes below all
+describe something that was published, and a binary built on a laptop is none of
+them, so it claims no version rather than inventing a `YY.M` string for a release
+that does not exist. The earlier `YY.M.DEV` form was dropped on 2026-08-08.
 
 The padding matters more than it looks. `26.08.1` is not valid SemVer, because
 the spec forbids leading zeros in numeric identifiers. Helm rejects it as a
