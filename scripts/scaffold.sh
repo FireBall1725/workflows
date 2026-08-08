@@ -18,7 +18,10 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="${1:?usage: scaffold.sh <repo-path> <go|node|python|swift|astro>}"
 LANG="${2:?usage: scaffold.sh <repo-path> <go|node|python|swift|astro>}"
 
-[ -d "$TARGET/.git" ] || { echo "error: $TARGET is not a git repo"; exit 1; }
+# `git rev-parse`, not `[ -d .git ]`: in a linked worktree .git is a FILE
+# pointing at the real gitdir, and pcexpress-mcp-server is checked out that way.
+git -C "$TARGET" rev-parse --git-dir >/dev/null 2>&1 \
+  || { echo "error: $TARGET is not a git repo"; exit 1; }
 
 copy() {
   local src="$HERE/templates/$1" dst="$TARGET/${2:-$1}"
