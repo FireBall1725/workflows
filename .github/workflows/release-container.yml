@@ -60,7 +60,7 @@ on:
       keep-nightlies:
         description: How many nightly versions to keep when pruning after a nightly build.
         type: number
-        default: 2
+        default: 10
       deploy-app:
         description: >
           Directory in homelab-applications to pin the new version into. Leave
