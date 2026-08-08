@@ -66,6 +66,21 @@ So a deploy is a git write: `image.tag` in
 `homelab-applications/<app>/values.yaml`, pinned to the immutable version. Roll
 back by reverting the commit.
 
+`deploy-bump.yml` does that write. Pass `deploy-app` to the release workflow and
+it opens a PR against `homelab-applications` with auto-merge; leave it empty and
+nothing happens, which is how the rollout stays phased. It also keeps
+`Chart.yaml` `appVersion` in step with `values.yaml` `image.tag`, which have
+drifted apart on every Librarium app because keeping them together was somebody's
+job and nobody's habit.
+
+The edits are line-anchored `awk`, not `yq`. `yq` round-trips the whole document
+and reflows a hand-maintained values file, which turns a one-line pin into an
+unreviewable diff.
+
+Nightly should point `deploy-app` at `<app>-nightly`, a separate app directory,
+so a nightly never overwrites the pin production is running. Those directories
+do not exist yet and have to be registered in `homelab-config/apps/` first.
+
 ## Changelogs
 
 git-cliff, one `cliff.toml`, byte-identical in every repo. Text comes from the
