@@ -45,6 +45,18 @@ on:
         description: Compute and build, but push nothing and tag nothing.
         type: boolean
         default: false
+      artifact-build:
+        description: >
+          Shell run after the image is pushed, to produce files to attach to
+          the Release. VERSION is in the environment. Skipped for nightly,
+          which publishes no Release. Go is set up automatically when the repo
+          has a go.mod.
+        type: string
+        default: ""
+      artifact-glob:
+        description: Files to attach, e.g. "dist/*". Requires artifact-build.
+        type: string
+        default: ""
       deploy-app:
         description: >
           Directory in homelab-applications to pin the new version into. Leave
@@ -181,6 +193,22 @@ jobs:
             echo "$NOTES"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Some repos ship more than an image: firebin-kicad cross-compiles the
+      # kicad-index CLI for five platforms, because the in-browser importer
+      # cannot reach ~/Library or /Applications on macOS.
+      - name: Set up Go for artifacts
+        if: ${{ inputs.artifact-build != '' && inputs.channel != 'nightly' && hashFiles('go.mod') != '' }}
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build release artifacts
+        if: ${{ inputs.artifact-build != '' && inputs.channel != 'nightly' }}
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: ${{ inputs.artifact-build }}
+
       - name: Tag release
         if: ${{ inputs.channel != 'nightly' && !inputs.dry-run }}
         run: |
@@ -198,6 +226,7 @@ jobs:
           # keeps an update checker quiet while a candidate is being tested.
           prerelease: ${{ steps.version.outputs.is-prerelease == 'true' }}
           make_latest: ${{ inputs.channel == 'stable' }}
+          files: ${{ inputs.artifact-glob }}
 
   # A Discord outage must never fail a release that already pushed an image and
   # a tag, so every step inside announce-discord.yml is continue-on-error. It
