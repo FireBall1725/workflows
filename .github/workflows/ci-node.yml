@@ -1,0 +1,83 @@
+name: CI (Node)
+
+# Shared CI for the React clients. Callers:
+#
+#   jobs:
+#     ci:
+#       uses: FireBall1725/workflows/.github/workflows/ci-node.yml@v1
+#       with:
+#         node-version: "22"
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: >
+          Pass the same major the Dockerfile builds with. librarium-web tested
+          on 22 while its image shipped 26, so CI was validating a runtime the
+          users never ran.
+        type: string
+        default: "22"
+      docker-build:
+        description: Build the Dockerfile without pushing, as a PR-time check.
+        type: boolean
+        default: true
+      build-args:
+        description: Build args for the PR-time Docker build, KEY=VALUE per line.
+        type: string
+        default: ""
+
+jobs:
+  build-test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        # Separate from the build so a type error is reported as a type error.
+        # librarium-web only caught these inside `npm run build`, which reads as
+        # a build failure.
+        run: npx tsc -b
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+  editorconfig:
+    name: Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: editorconfig-checker/action-editorconfig-checker@main
+      - run: editorconfig-checker
+
+  docker:
+    name: Docker build
+    if: inputs.docker-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          # Single-arch on PRs. The release build does multi-arch; emulating
+          # arm64 here would double the wait for no extra signal.
+          platforms: linux/amd64
+          build-args: ${{ inputs.build-args }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
