@@ -28,6 +28,12 @@ outputs:
   is-prerelease:
     description: "true for nightly and rc"
     value: ${{ steps.compute.outputs.is-prerelease }}
+  previous-stable-tag:
+    description: >
+      The newest fully-numeric tag, e.g. v26.7.0. Empty on a repo with no
+      stable release yet. Stable release notes span from here, so that the rc
+      tags in between do not truncate them.
+    value: ${{ steps.compute.outputs.previous-stable-tag }}
 
 runs:
   using: composite
@@ -124,11 +130,20 @@ runs:
           *)      PRE=true ;;
         esac
 
+        # The newest stable tag across all months, not just this one. A stable
+        # release cut after a run of rcs must describe everything since the
+        # last stable, or the notes come out empty: HEAD is already tagged
+        # with the final rc, so nothing is "unreleased".
+        PREV_STABLE=$(git tag --list 'v*' \
+          | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+          | sort -V | tail -n1 || true)
+
         {
           echo "version=$VERSION"
           echo "tag=$TAG"
           echo "base=$BASE"
           echo "is-prerelease=$PRE"
+          echo "previous-stable-tag=$PREV_STABLE"
         } >> "$GITHUB_OUTPUT"
 
         echo "Channel $CHANNEL -> $VERSION" >> "$GITHUB_STEP_SUMMARY"

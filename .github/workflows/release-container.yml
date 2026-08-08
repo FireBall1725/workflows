@@ -156,6 +156,10 @@ jobs:
           # Empty for nightly, which is untagged; the action then reports
           # everything since the last release instead.
           tag: ${{ steps.version.outputs.tag }}
+          # Stable spans from the last STABLE tag, so a run of rcs in between
+          # does not swallow the notes. rc and nightly span from the last tag
+          # of any kind, which is what you want for an increment.
+          since: ${{ inputs.channel == 'stable' && steps.version.outputs.previous-stable-tag || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

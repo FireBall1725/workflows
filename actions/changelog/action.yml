@@ -16,6 +16,15 @@ inputs:
       2026-08-07 before this was fixed.
     required: false
     default: ""
+  since:
+    description: >
+      Span from this tag instead of from the last tag of any kind. Set to the
+      previous STABLE tag when cutting a stable release: HEAD is normally
+      already tagged with the final rc, so "unreleased" is empty and the notes
+      come out blank. Verified on firebin-mcp v26.8.0, which shipped with
+      "No changes recorded" before this existed.
+    required: false
+    default: ""
   config:
     description: Path to cliff.toml in the calling repo.
     required: false
@@ -43,6 +52,7 @@ runs:
       shell: bash
       env:
         TAG: ${{ inputs.tag }}
+        SINCE: ${{ inputs.since }}
         CONFIG: ${{ inputs.config }}
         # git-cliff resolves each commit to its PR through the API. Without a
         # token it silently falls back to commit subjects, which is a quiet
@@ -56,13 +66,21 @@ runs:
           exit 1
         fi
 
-        ARGS=(--config "$CONFIG" --strip header --unreleased)
+        ARGS=(--config "$CONFIG" --strip header)
         # owner/repo comes from the workflow rather than the config file, which
         # is what lets one cliff.toml be byte-identical in every repo.
         ARGS+=(--github-repo "$GITHUB_REPOSITORY")
-        # Naming the tag that does not exist yet makes git-cliff treat the
-        # unreleased commits as that release.
+        # Naming the tag that does not exist yet makes git-cliff treat these
+        # commits as that release.
         [ -n "$TAG" ] && ARGS+=(--tag "$TAG")
+
+        if [ -n "$SINCE" ]; then
+          # --ignore-tags stops the rc tags inside the range from splitting the
+          # output into one chunk per rc, which also scrambles the order.
+          ARGS+=("${SINCE}..HEAD" --ignore-tags '\-(rc|nightly)\.')
+        else
+          ARGS+=(--unreleased)
+        fi
 
         CONTENT=$(git-cliff "${ARGS[@]}")
 
