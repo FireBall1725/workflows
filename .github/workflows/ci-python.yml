@@ -1,0 +1,83 @@
+name: CI (Python)
+
+# Shared CI for the Python services. Callers:
+#
+#   jobs:
+#     ci:
+#       uses: FireBall1725/workflows/.github/workflows/ci-python.yml@v1
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: Pass the same version the Dockerfile builds with.
+        type: string
+        default: "3.12"
+      import-check:
+        description: >
+          Module to import as a smoke test. A large module with lazy imports can
+          lint clean and still fail at startup, and an MCP server that cannot be
+          imported is a server that cannot run.
+        type: string
+        default: ""
+      docker-build:
+        description: Build the Dockerfile without pushing, as a PR-time check.
+        type: boolean
+        default: true
+
+jobs:
+  build-test:
+    name: Lint and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          # The service's own dependencies, then the tooling. requirements.txt
+          # stays the Dockerfile's source of truth; pyproject carries the dev
+          # extras.
+          [ -f requirements.txt ] && pip install -r requirements.txt
+          pip install ruff pytest
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Format
+        run: ruff format --check .
+
+      - name: Test
+        run: pytest -q
+
+      - name: Import check
+        if: inputs.import-check != ''
+        run: python -c "import ${{ inputs.import-check }}"
+
+  editorconfig:
+    name: Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: editorconfig-checker/action-editorconfig-checker@main
+      - run: editorconfig-checker
+
+  docker:
+    name: Docker build
+    if: inputs.docker-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
