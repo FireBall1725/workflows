@@ -219,18 +219,50 @@ def build(cfg: dict[str, Any], ctx: dict[str, str], notes: str) -> dict[str, Any
     return payload
 
 
+# Cloudflare sits in front of Discord and blocks requests by browser
+# signature. urllib's default "Python-urllib/3.x" is on that list, and the
+# rejection is a 403 with body `error code: 1010`, which says nothing about
+# user agents. Any honest, specific UA gets through.
+USER_AGENT = (
+    "FireBall1725-release-bot/1.0 (+https://github.com/FireBall1725/workflows)"
+)
+
+
 def post(url: str, payload: dict[str, Any]) -> None:
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
-        url, data=data, headers={"Content-Type": "application/json"}
+        url,
+        data=data,
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": USER_AGENT,
+        },
     )
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             print(f"Discord responded {resp.status}")
     except urllib.error.HTTPError as e:
         body = e.read().decode(errors="replace")[:500]
-        print(f"::warning::Discord rejected the payload ({e.code}): {body}")
+        hint = ""
+        if e.code == 403 and "1010" in body:
+            hint = " (Cloudflare browser-signature block: check the User-Agent header)"
+        note(f"Discord rejected the payload ({e.code}){hint}: {body}")
         raise
+
+
+def note(message: str) -> None:
+    """Warn in the log AND in the job summary.
+
+    Every step here is continue-on-error so a Discord outage cannot fail a
+    release that already published an image and a tag. The cost is that a
+    failure leaves the job green, and a ::warning:: in a log nobody opens is
+    not a signal. The summary is on the run's front page.
+    """
+    print(f"::warning::{message}")
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a") as fh:
+            fh.write(f"\n> **Discord announcement failed.** {message}\n")
 
 
 def main() -> int:
@@ -271,7 +303,7 @@ def main() -> int:
     webhook = os.environ.get("WEBHOOK", "")
     if not webhook:
         # A fork PR gets no secrets. Skipping is correct; failing is not.
-        print("::warning::No webhook configured; skipping the announcement.")
+        note("No webhook configured; skipping the announcement.")
         return 0
 
     post(webhook, payload)
