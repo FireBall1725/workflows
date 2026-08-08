@@ -43,9 +43,28 @@ runs:
       run: |
         set -euo pipefail
         VERSION=2.13.1
-        curl -sSL "https://github.com/orhun/git-cliff/releases/download/v${VERSION}/git-cliff-${VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
-          | tar -xz -C /tmp
-        echo "/tmp/git-cliff-${VERSION}" >> "$GITHUB_PATH"
+
+        # The asset is per-platform. Hardcoding the Linux one worked for every
+        # container repo and then failed on LayerLens with "cannot execute
+        # binary file", because that release builds on macOS.
+        case "$(uname -s)/$(uname -m)" in
+          Linux/x86_64)  ASSET="x86_64-unknown-linux-gnu" ;;
+          Linux/aarch64) ASSET="aarch64-unknown-linux-gnu" ;;
+          Darwin/arm64)  ASSET="aarch64-apple-darwin" ;;
+          Darwin/x86_64) ASSET="x86_64-apple-darwin" ;;
+          *) echo "::error::No git-cliff build for $(uname -s)/$(uname -m)"; exit 1 ;;
+        esac
+
+        DEST="$RUNNER_TEMP/git-cliff"
+        mkdir -p "$DEST"
+        curl -sSL "https://github.com/orhun/git-cliff/releases/download/v${VERSION}/git-cliff-${VERSION}-${ASSET}.tar.gz" \
+          | tar -xz -C "$DEST"
+
+        # The archive's top-level directory name has changed between releases,
+        # so find the binary rather than assuming the path.
+        BIN_DIR=$(dirname "$(find "$DEST" -name git-cliff -type f -perm -u+x | head -n1)")
+        [ -n "$BIN_DIR" ] || { echo "::error::git-cliff not found in the archive"; exit 1; }
+        echo "$BIN_DIR" >> "$GITHUB_PATH"
 
     - name: Render
       id: render
