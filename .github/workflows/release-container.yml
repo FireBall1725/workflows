@@ -45,6 +45,14 @@ on:
         description: Compute and build, but push nothing and tag nothing.
         type: boolean
         default: false
+      deploy-app:
+        description: >
+          Directory in homelab-applications to pin the new version into. Leave
+          empty to skip the deploy entirely and keep pinning by hand. Nightly
+          should point at "<app>-nightly" so it never overwrites what
+          production is running.
+        type: string
+        default: ""
     outputs:
       version:
         value: ${{ jobs.release.outputs.version }}
@@ -192,6 +200,22 @@ jobs:
   # a tag, so every step inside announce-discord.yml is continue-on-error. It
   # cannot be set here: a job that calls a reusable workflow accepts only
   # uses/with/secrets/needs/if/permissions/strategy/concurrency/name.
+  # Opt-in per caller. Without deploy-app it does nothing, which is how the
+  # rollout stays phased: publish nightly images first, pin them by hand, and
+  # turn the bot on once the -nightly app directories are registered in
+  # homelab-config.
+  deploy:
+    needs: release
+    if: ${{ inputs.deploy-app != '' && !inputs.dry-run }}
+    permissions:
+      contents: read
+    uses: FireBall1725/workflows/.github/workflows/deploy-bump.yml@v1
+    with:
+      app: ${{ inputs.deploy-app }}
+      version: ${{ needs.release.outputs.version }}
+      channel: ${{ inputs.channel }}
+    secrets: inherit
+
   announce:
     needs: release
     if: ${{ inputs.channel != 'nightly' && !inputs.dry-run }}

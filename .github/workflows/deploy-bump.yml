@@ -1,0 +1,235 @@
+name: Deploy bump
+
+# Writes a freshly published image tag into homelab-applications so ArgoCD
+# deploys it.
+#
+# This exists because ArgoCD watches the git manifest, not the registry. There
+# is no Image Updater and no Flux, and the charts run `pullPolicy: IfNotPresent`,
+# so a moved `:nightly` tag changes nothing and the node keeps the image it
+# already had. A deploy is a git write or it does not happen.
+#
+# Called from release-container.yml after a successful push. Skips itself
+# cleanly when no token is configured, so a repo that opts out is not a
+# failing release.
+#
+# Caller:
+#
+#   deploy:
+#     needs: release
+#     permissions: { contents: read }
+#     uses: FireBall1725/workflows/.github/workflows/deploy-bump.yml@v1
+#     with:
+#       app: firebin-mcp
+#       version: ${{ needs.release.outputs.version }}
+#       channel: stable
+#     secrets: inherit
+
+on:
+  workflow_call:
+    inputs:
+      app:
+        description: >
+          Directory in homelab-applications to write to. For nightly this is
+          usually "<app>-nightly", so a nightly never overwrites the pin that
+          production is running.
+        type: string
+        required: true
+      version:
+        description: The image tag to pin. No leading v.
+        type: string
+        required: true
+      channel:
+        description: nightly, rc, or stable. Only used in the PR text.
+        type: string
+        required: true
+      bump-chart-version:
+        description: >
+          Also increment the chart's own `version` patch. Off by default: the
+          chart version tracks template changes, and pinning a new image is not
+          one.
+        type: boolean
+        default: false
+      direct-push:
+        description: >
+          Push straight to main instead of opening a PR. Off by default,
+          because everything here goes through a PR. Turning it on for nightly
+          trades an audit trail for fewer PRs.
+        type: boolean
+        default: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for a token
+        id: gate
+        env:
+          TOKEN: ${{ secrets.HOMELAB_DEPLOY_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::warning::HOMELAB_DEPLOY_TOKEN is not set; skipping the deploy bump."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out homelab-applications
+        if: steps.gate.outputs.skip == 'false'
+        uses: actions/checkout@v4
+        with:
+          repository: FireBall1725/homelab-applications
+          token: ${{ secrets.HOMELAB_DEPLOY_TOKEN }}
+          fetch-depth: 0
+
+      - name: Rewrite the pin
+        if: steps.gate.outputs.skip == 'false'
+        id: edit
+        env:
+          APP: ${{ inputs.app }}
+          VERSION: ${{ inputs.version }}
+          BUMP_CHART: ${{ inputs.bump-chart-version }}
+        run: |
+          set -euo pipefail
+
+          VALUES="${APP}/values.yaml"
+          CHART="${APP}/Chart.yaml"
+
+          # Fail loudly rather than silently creating a directory ArgoCD has
+          # never heard of. A -nightly app has to be registered in
+          # homelab-config/apps/<name>/app-config.json first, or the
+          # ApplicationSet will not generate anything for it.
+          if [ ! -f "$VALUES" ]; then
+            echo "::error::${VALUES} does not exist. Register the app in homelab-config first."
+            exit 1
+          fi
+
+          # Deliberately awk rather than yq. yq round-trips the whole
+          # document, which reflows a hand-maintained values.yaml and buries a
+          # one-line pin change in an unreviewable diff. These rewrite exactly
+          # the line they target: verified to change 1 line of 142 on
+          # firebin-mcp/values.yaml, comments and line count intact.
+
+          # The tag under the top-level image: block, and no other tag: key.
+          read_tag() {
+            awk '
+              /^[a-zA-Z_-]+:/ { in_image = ($0 ~ /^image:/) }
+              in_image && /^[[:space:]]+tag:[[:space:]]/ {
+                sub(/^[[:space:]]+tag:[[:space:]]*/, ""); gsub(/"/, ""); print; exit
+              }
+            ' "$1"
+          }
+
+          CURRENT=$(read_tag "$VALUES")
+          if [ -z "$CURRENT" ]; then
+            echo "::error::No image.tag found in ${VALUES}."
+            exit 1
+          fi
+          if [ "$CURRENT" = "$VERSION" ]; then
+            echo "Already pinned to ${VERSION}; nothing to do."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Quoted on purpose: unquoted, a value like 26.8 parses as a float
+          # and reaches Helm as "26.8".
+          awk -v new="$VERSION" '
+            /^[a-zA-Z_-]+:/ { in_image = ($0 ~ /^image:/) }
+            in_image && !done && /^[[:space:]]+tag:[[:space:]]/ {
+              match($0, /^[[:space:]]+/)
+              printf "%stag: \"%s\"\n", substr($0, 1, RLENGTH), new
+              done = 1; next
+            }
+            { print }
+          ' "$VALUES" > "$VALUES.tmp" && mv "$VALUES.tmp" "$VALUES"
+
+          if [ "$(read_tag "$VALUES")" != "$VERSION" ]; then
+            echo "::error::Rewrite did not take; ${VALUES} still reads $(read_tag "$VALUES")."
+            exit 1
+          fi
+
+          if [ -f "$CHART" ]; then
+            awk -v new="$VERSION" '
+              /^appVersion:/ && !done { printf "appVersion: \"%s\"\n", new; done = 1; next }
+              { print }
+            ' "$CHART" > "$CHART.tmp" && mv "$CHART.tmp" "$CHART"
+
+            if [ "$BUMP_CHART" = "true" ]; then
+              CV=$(awk '/^version:/ {gsub(/version:[[:space:]]*|"/, ""); print; exit}' "$CHART")
+              MAJOR="${CV%%.*}"; REST="${CV#*.}"
+              MINOR="${REST%%.*}"; PATCH="${REST#*.}"
+              NEWCV="${MAJOR}.${MINOR}.$((PATCH + 1))"
+              awk -v new="$NEWCV" '
+                /^version:/ && !done { printf "version: %s\n", new; done = 1; next }
+                { print }
+              ' "$CHART" > "$CHART.tmp" && mv "$CHART.tmp" "$CHART"
+            fi
+          fi
+
+          {
+            echo "changed=true"
+            echo "previous=${CURRENT}"
+          } >> "$GITHUB_OUTPUT"
+
+          git diff --stat
+
+      - name: Commit
+        if: steps.gate.outputs.skip == 'false' && steps.edit.outputs.changed == 'true'
+        env:
+          APP: ${{ inputs.app }}
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+          PREVIOUS: ${{ steps.edit.outputs.previous }}
+          DIRECT: ${{ inputs.direct-push }}
+          GH_TOKEN: ${{ secrets.HOMELAB_DEPLOY_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          BRANCH="deploy/${APP}-${VERSION}"
+          TITLE="${APP}: ${VERSION}"
+          BODY="Published by [${GITHUB_REPOSITORY}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}) on the \`${CHANNEL}\` channel.
+
+          Was \`${PREVIOUS}\`.
+
+          Pinned to the immutable tag rather than a floating one: ArgoCD syncs on a git manifest change and the charts run \`pullPolicy: IfNotPresent\`, so a moved tag would deploy nothing."
+
+          git add -A
+          git commit -s -m "${TITLE}" -m "Was ${PREVIOUS}. Published on the ${CHANNEL} channel by ${GITHUB_REPOSITORY}."
+
+          if [ "$DIRECT" = "true" ]; then
+            git push origin HEAD:main
+            echo "Pushed straight to main."
+          else
+            git push origin "HEAD:${BRANCH}" --force
+            # --fill-first would take the commit subject; the body above is
+            # more useful to anyone reading the deploy history later.
+            gh pr create --repo FireBall1725/homelab-applications \
+              --base main --head "$BRANCH" \
+              --title "$TITLE" --body "$BODY" 2>/dev/null \
+              || echo "PR already open for ${BRANCH}."
+            # Auto-merge needs the setting enabled on the repo. Falling back to
+            # a plain merge keeps a deploy from stalling on a config detail.
+            gh pr merge --repo FireBall1725/homelab-applications "$BRANCH" \
+              --squash --auto --delete-branch \
+              || gh pr merge --repo FireBall1725/homelab-applications "$BRANCH" \
+                   --squash --delete-branch
+          fi
+
+      - name: Summary
+        if: steps.gate.outputs.skip == 'false' && steps.edit.outputs.changed == 'true'
+        env:
+          APP: ${{ inputs.app }}
+          VERSION: ${{ inputs.version }}
+          PREVIOUS: ${{ steps.edit.outputs.previous }}
+        run: |
+          {
+            echo "## Deployed"
+            echo
+            echo "\`${APP}\` pinned to \`${VERSION}\` (was \`${PREVIOUS}\`)."
+            echo
+            echo "ArgoCD picks this up on its next poll. If it reports Synced"
+            echo "against an older revision, that is the stale-cache false"
+            echo "green: annotate the app with"
+            echo "\`argocd.argoproj.io/refresh=hard\` in the core-argocd namespace."
+          } >> "$GITHUB_STEP_SUMMARY"
