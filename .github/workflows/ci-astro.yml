@@ -1,0 +1,54 @@
+name: CI (Astro)
+
+# Shared CI for the marketing and personal sites. Callers:
+#
+#   jobs:
+#     ci:
+#       uses: FireBall1725/workflows/.github/workflows/ci-astro.yml@v1
+#
+# These sites do not version and do not release: merging to main is shipping.
+# So there is no release workflow to pair with this, only a gate on the PR.
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        type: string
+        default: "22"
+      check:
+        description: >
+          Run `npm run check` (astro check). Off for a site that has not added
+          @astrojs/check yet; adding it is the better fix.
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+
+      - run: npm ci
+
+      - name: Check
+        if: inputs.check
+        run: npm run check
+
+      - name: Build
+        # These deploy on merge, so a build that only fails at deploy time
+        # fails after the site is already meant to be live.
+        run: npm run build
+
+  editorconfig:
+    name: Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: editorconfig-checker/action-editorconfig-checker@main
+      - run: editorconfig-checker
