@@ -1,0 +1,80 @@
+name: CI (Swift)
+
+# Shared CI for the Swift packages. Callers:
+#
+#   jobs:
+#     ci:
+#       uses: FireBall1725/workflows/.github/workflows/ci-swift.yml@v1
+#
+# Xcode projects that build with xcodebuild rather than SwiftPM (librarium-ios)
+# pass build-command and test-command instead of using the defaults.
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: >
+          Pin the runner when the build needs a specific Xcode. macos-latest
+          floats, which is fine for a SwiftPM package and not for an app that
+          has to match a shipped SDK.
+        type: string
+        default: macos-latest
+      xcode-path:
+        description: Selected with xcode-select. Empty leaves the runner default.
+        type: string
+        default: ""
+      build-command:
+        type: string
+        default: swift build -v
+      test-command:
+        type: string
+        default: swift test -v
+      lint-paths:
+        description: Directories passed to swift format.
+        type: string
+        default: Sources Tests
+      lint-strict:
+        description: >
+          Fail on lint findings rather than annotating. Off only while a tree is
+          being brought up to the shared .swift-format; turn it on and leave it
+          on.
+        type: boolean
+        default: true
+
+jobs:
+  build-test:
+    name: Build and test
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        if: inputs.xcode-path != ''
+        run: sudo xcode-select -s ${{ inputs.xcode-path }}
+
+      - run: ${{ inputs.build-command }}
+      - run: ${{ inputs.test-command }}
+
+  lint:
+    name: Lint
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        if: inputs.xcode-path != ''
+        run: sudo xcode-select -s ${{ inputs.xcode-path }}
+
+      - name: swift format lint
+        run: |
+          swift format lint --recursive ${{ inputs.lint-strict && '--strict' || '' }} ${{ inputs.lint-paths }}
+
+  editorconfig:
+    name: Formatting
+    # Ubuntu on purpose: this job needs no toolchain and macOS runner minutes
+    # bill at ten times the rate.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: editorconfig-checker/action-editorconfig-checker@main
+      - run: editorconfig-checker
