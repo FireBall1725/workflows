@@ -5,14 +5,15 @@ description: >
   so it works for repos that merge PRs and repos that ship straight from main.
 
 inputs:
-  mode:
-    description: "latest (the newest tag) or unreleased (everything since it)"
-    required: true
-    default: latest
   tag:
     description: >
-      The tag being released. Passed to git-cliff so notes can be generated in
-      the same run that creates the tag, before the tag is pushed.
+      The tag being cut, e.g. v26.8.1. Empty for nightly, which is untagged.
+
+      Notes are always generated with --unreleased, because this runs BEFORE
+      the tag is created: nothing should be published if the changelog fails.
+      --latest would resolve to the PREVIOUS release and silently emit notes
+      for changes that already shipped, which is what v26.8.0-rc.2 got on
+      2026-08-07 before this was fixed.
     required: false
     default: ""
   config:
@@ -41,7 +42,6 @@ runs:
       id: render
       shell: bash
       env:
-        MODE: ${{ inputs.mode }}
         TAG: ${{ inputs.tag }}
         CONFIG: ${{ inputs.config }}
         # git-cliff resolves each commit to its PR through the API. Without a
@@ -56,17 +56,13 @@ runs:
           exit 1
         fi
 
-        ARGS=(--config "$CONFIG" --strip header)
+        ARGS=(--config "$CONFIG" --strip header --unreleased)
         # owner/repo comes from the workflow rather than the config file, which
         # is what lets one cliff.toml be byte-identical in every repo.
         ARGS+=(--github-repo "$GITHUB_REPOSITORY")
+        # Naming the tag that does not exist yet makes git-cliff treat the
+        # unreleased commits as that release.
         [ -n "$TAG" ] && ARGS+=(--tag "$TAG")
-
-        case "$MODE" in
-          latest)     ARGS+=(--latest) ;;
-          unreleased) ARGS+=(--unreleased) ;;
-          *) echo "::error::mode must be latest or unreleased"; exit 1 ;;
-        esac
 
         CONTENT=$(git-cliff "${ARGS[@]}")
 

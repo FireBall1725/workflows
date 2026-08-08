@@ -153,9 +153,8 @@ jobs:
         id: changelog
         uses: FireBall1725/workflows/actions/changelog@v1
         with:
-          # For a tagged release, notes cover the new tag. For nightly there is
-          # no tag, so it covers everything since the last stable.
-          mode: ${{ inputs.channel == 'nightly' && 'unreleased' || 'latest' }}
+          # Empty for nightly, which is untagged; the action then reports
+          # everything since the last release instead.
           tag: ${{ steps.version.outputs.tag }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
