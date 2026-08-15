@@ -33,7 +33,7 @@ DRY_RUN="${DRY_RUN:-}"
 
 # Repos that publish a release and can announce it.
 ANNOUNCE_REPOS=(
-  librarium-api librarium-web librarium-mcp
+  librarium-api librarium-web librarium-mcp librarium-ios
   firebin-api firebin-web firebin-mcp firebin-kicad
   pcexpress-mcp-server
   LayerLens
