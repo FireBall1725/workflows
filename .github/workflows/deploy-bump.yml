@@ -91,17 +91,46 @@ jobs:
         run: |
           set -euo pipefail
 
-          VALUES="${APP}/values.yaml"
-          CHART="${APP}/Chart.yaml"
+          # Find the app's chart directory.
+          #
+          # homelab-applications used to hold <app>/values.yaml at its root and
+          # now holds apps/<namespace>/<app>/values.yaml. This job was still
+          # building the flat path, so it failed on every release of every
+          # repo — nothing is at the old layout any more — and each one had to
+          # be pinned by hand afterwards. It looked like a misconfigured repo
+          # rather than a stale path because the error said "register the app
+          # in homelab-config", which stopped being true when the two GitOps
+          # repos were consolidated.
+          #
+          # Searched rather than taken as a namespace input, so no caller has
+          # to be edited and anything still at the old layout keeps working.
+          DIR=""
+          if [ -f "${APP}/values.yaml" ]; then
+            DIR="$APP"
+          else
+            FOUND=$(find apps -mindepth 2 -maxdepth 2 -type d -name "$APP" 2>/dev/null | sort)
+            COUNT=$(printf '%s' "$FOUND" | grep -c . || true)
+            if [ "$COUNT" -gt 1 ]; then
+              echo "::error::${APP} exists in more than one namespace, so this job cannot tell which to pin:"
+              printf '%s\n' "$FOUND" | while read -r d; do echo "::error::  $d"; done
+              exit 1
+            fi
+            DIR=$(printf '%s' "$FOUND")
+          fi
 
           # Fail loudly rather than silently creating a directory ArgoCD has
           # never heard of. A -nightly app has to be registered in
-          # homelab-config/apps/<name>/app-config.json first, or the
-          # ApplicationSet will not generate anything for it.
-          if [ ! -f "$VALUES" ]; then
-            echo "::error::${VALUES} does not exist. Register the app in homelab-config first."
+          # homelab-applications first, or the ApplicationSet will not generate
+          # anything for it.
+          if [ -z "$DIR" ] || [ ! -f "$DIR/values.yaml" ]; then
+            echo "::error::No values.yaml for ${APP} in homelab-applications."
+            echo "::error::Looked for apps/*/${APP}/values.yaml and ${APP}/values.yaml."
             exit 1
           fi
+
+          echo "Pinning $DIR"
+          VALUES="$DIR/values.yaml"
+          CHART="$DIR/Chart.yaml"
 
           # Deliberately awk rather than yq. yq round-trips the whole
           # document, which reflows a hand-maintained values.yaml and buries a
