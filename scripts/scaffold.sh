@@ -5,7 +5,7 @@
 #   ./scaffold.sh ~/Repos/firebin/mcp go
 #   ./scaffold.sh ~/Repos/pcexpress-mcp-server python
 #
-# Language is one of: go, node, python, swift, astro.
+# Language is one of: go, node, python, swift, astro, csharp.
 #
 # These files are copied rather than referenced because golangci-lint, ruff,
 # swift-format, and editorconfig all read from the repo root. Re-run this after
@@ -15,8 +15,8 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TARGET="${1:?usage: scaffold.sh <repo-path> <go|node|python|swift|astro>}"
-LANG="${2:?usage: scaffold.sh <repo-path> <go|node|python|swift|astro>}"
+TARGET="${1:?usage: scaffold.sh <repo-path> <go|node|python|swift|astro|csharp>}"
+LANG="${2:?usage: scaffold.sh <repo-path> <go|node|python|swift|astro|csharp>}"
 
 # `git rev-parse`, not `[ -d .git ]`: in a linked worktree .git is a FILE
 # pointing at the real gitdir, and pcexpress-mcp-server is checked out that way.
@@ -43,6 +43,11 @@ case "$LANG" in
   go)     copy .golangci.yml ;;
   python) copy ruff.toml ;;
   swift)  copy .swift-format ;;
+  # dotnet format cannot express the adjacent-paren rule, so a C# repo needs the second
+  # pass alongside the .editorconfig that declares it.
+  csharp) mkdir -p "$TARGET/scripts"
+          copy tighten_parens.py scripts/tighten_parens.py
+          chmod +x "$TARGET/scripts/tighten_parens.py" ;;
   node|astro) ;;
   *) echo "error: unknown language '$LANG'"; exit 1 ;;
 esac
