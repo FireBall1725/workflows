@@ -7,6 +7,9 @@ name: CI (Node)
 #       uses: FireBall1725/workflows/.github/workflows/ci-node.yml@v1
 #       with:
 #         node-version: "22"
+#
+# A repo whose web client lives in a subdirectory (a Go binary that embeds
+# its UI, for one) passes working-directory: web.
 
 on:
   workflow_call:
@@ -26,11 +29,18 @@ on:
         description: Build args for the PR-time Docker build, KEY=VALUE per line.
         type: string
         default: ""
+      working-directory:
+        description: Directory holding package.json, relative to the repo root.
+        type: string
+        default: "."
 
 jobs:
   build-test:
     name: Build and test
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
     steps:
       - uses: actions/checkout@v4
 
@@ -38,6 +48,7 @@ jobs:
         with:
           node-version: ${{ inputs.node-version }}
           cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
 
       - run: npm ci
 
