@@ -45,6 +45,15 @@ on:
         description: Compute and build, but push nothing and tag nothing.
         type: boolean
         default: false
+      pre-build:
+        description: >
+          Shell run before the image is built, from the repo root, for anything
+          the Dockerfile copies in but the repo does not hold, such as a jar
+          from a private package. The repo secret PRE_BUILD_TOKEN is in the
+          environment as PRE_BUILD_TOKEN, so the token never reaches the image.
+          Runs for every channel, including dry runs.
+        type: string
+        default: ""
       artifact-build:
         description: >
           Shell run after the image is pushed, to produce files to attach to
@@ -135,6 +144,13 @@ jobs:
             echo "$TAGS"
             echo "TAGS_EOF"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Pre-build
+        if: ${{ inputs.pre-build != '' }}
+        env:
+          PRE_BUILD_TOKEN: ${{ secrets.PRE_BUILD_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: ${{ inputs.pre-build }}
 
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
